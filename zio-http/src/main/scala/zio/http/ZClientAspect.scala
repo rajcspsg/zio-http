@@ -132,9 +132,10 @@ object ZClientAspect {
             headers: Headers,
             body: Body,
             sslConfig: Option[ClientSSLConfig],
+            proxy: Option[Proxy]
           )(implicit trace: Trace): ZIO[Env & Scope, Err, Response] =
             oldDriver
-              .request(version, method, url, headers, body, sslConfig)
+              .request(version, method, url, headers, body, sslConfig, proxy)
               .sandbox
               .exit
               .timed
@@ -160,6 +161,50 @@ object ZClientAspect {
           ): ZIO[Env1 with Scope, Err, Response] =
             client.driver.socket(version, url, headers, app)
         }
+
+        client.transform(client.bodyEncoder, client.bodyDecoder, newDriver)
+      }
+    }
+
+  /**
+   * Client aspect that updates the proxy settings of specified client
+   */
+  final def proxyClient(proxy: Proxy) (implicit  trace: Trace): ZClientAspect[Nothing, Any, Nothing, Body, Nothing, Any, Nothing, Response] =
+    new ZClientAspect[Nothing, Any, Nothing, Body, Nothing, Any, Nothing, Response] {
+      /**
+       * Applies this aspect to proxy settings for specified client.
+       */
+      override def apply[
+        Env >: Nothing <: Any,
+        In >: Nothing <: Body,
+        Err >: Nothing <: Any,
+        Out >: Nothing <: Response
+      ](client: ZClient[Env, In, Err, Out]
+       ): ZClient[Env, In, Err, Out] = {
+          val oldDriver = client.driver
+          val newDriver: ZClient.Driver[Env, Err] = new ZClient.Driver[Env, Err] {
+            override def request(
+                 version: Version,
+                 method: Method,
+                 url: URL,
+                 headers: Headers,
+                 body: Body,
+                 sslConfig: Option[ClientSSLConfig],
+                 proxy: Option[Proxy]
+               )(implicit trace: Trace):
+            ZIO[Env & Scope, Err, Response] = {
+              oldDriver.request(version, method, url, headers, body, sslConfig, proxy)
+            }
+
+            override def socket[Env1 <: Env](
+                 version: Version,
+                 url: URL,
+                 headers: Headers,
+                 app: SocketApp[Env1]
+               )(implicit trace: Trace):
+            ZIO[Env1 & Scope, Err, Response] =
+              client.driver.socket(version, url, headers, app)
+          }
 
         client.transform(client.bodyEncoder, client.bodyDecoder, newDriver)
       }
@@ -203,9 +248,10 @@ object ZClientAspect {
             headers: Headers,
             body: Body,
             sslConfig: Option[ClientSSLConfig],
+            proxy: Option[Proxy],
           )(implicit trace: Trace): ZIO[Env & Scope, Err, Response] = {
             oldDriver
-              .request(version, method, url, headers, body, sslConfig)
+              .request(version, method, url, headers, body, sslConfig, proxy)
               .sandbox
               .exit
               .timed

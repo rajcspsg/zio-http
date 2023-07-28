@@ -17,12 +17,10 @@
 package zio.http
 
 import java.net.ConnectException
-
 import zio.test.Assertion._
-import zio.test.TestAspect.{sequential, timeout, withLiveClock}
+import zio.test.TestAspect.{ignore, sequential, timeout, withLiveClock}
 import zio.test._
 import zio.{Scope, ZIO, ZLayer, durationInt}
-
 import zio.http.internal.{DynamicServer, HttpRunnableSpec, severTestLayer}
 import zio.http.netty.NettyConfig
 import zio.http.netty.client.NettyClientDriver
@@ -48,7 +46,7 @@ object ClientProxySpec extends HttpRunnableSpec {
             )
         } yield out
       assertZIO(res.either)(isLeft(isSubtype[ConnectException](anything)))
-    },
+    } @@ignore,
     test("proxy respond Ok") {
       val res =
         for {

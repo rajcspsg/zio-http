@@ -33,6 +33,7 @@ final case class ZClient[-Env, -In, +Err, +Out](
   bodyEncoder: ZClient.BodyEncoder[Env, Err, In],
   bodyDecoder: ZClient.BodyDecoder[Env, Err, Out],
   driver: ZClient.Driver[Env, Err],
+  proxy: Option[Proxy]
 ) extends HeaderOps[ZClient[Env, In, Err, Out]] { self =>
   def apply(request: Request)(implicit ev: Body <:< In, trace: Trace): ZIO[Env & Scope, Err, Out] =
     self.request(request)
@@ -162,6 +163,7 @@ final case class ZClient[-Env, -In, +Err, +Out](
             self.headers ++ request.headers,
             request.body,
             sslConfig,
+            proxy,
           ),
       )
     else
@@ -177,6 +179,7 @@ final case class ZClient[-Env, -In, +Err, +Out](
                 self.headers ++ request.headers,
                 body,
                 sslConfig,
+                proxy,
               ),
           ),
         )
@@ -197,6 +200,7 @@ final case class ZClient[-Env, -In, +Err, +Out](
         headers,
         body,
         sslConfig,
+        proxy,
       )
 
   def retry[Env1 <: Env](policy: Schedule[Env1, Err, Any]): ZClient[Env1, In, Err, Out] =
@@ -231,6 +235,7 @@ final case class ZClient[-Env, -In, +Err, +Out](
       bodyEncoder,
       bodyDecoder,
       driver,
+      proxy,
     )
 
   def uri(uri: URI): ZClient[Env, In, Err, Out] = url(URL.fromURI(uri).getOrElse(URL.empty))
@@ -281,6 +286,7 @@ object ZClient {
       BodyEncoder.identity,
       BodyDecoder.identity,
       driver,
+      None
     )
 
   lazy val live: ZLayer[ZClient.Config with NettyConfig with DnsResolver, Throwable, Client] = {
@@ -363,7 +369,7 @@ object ZClient {
 
   trait Driver[-Env, +Err] { self =>
     final def apply(request: Request)(implicit trace: Trace): ZIO[Env & Scope, Err, Response] =
-      self.request(request.version, request.method, request.url, request.headers, request.body, None)
+      self.request(request.version, request.method, request.url, request.headers, request.body, None, None)
 
     final def disableStreaming(implicit ev: Err <:< Throwable): Driver[Env, Throwable] = {
       val self0 = self.widenError[Throwable]
@@ -376,8 +382,9 @@ object ZClient {
           headers: Headers,
           body: Body,
           sslConfig: Option[ClientSSLConfig],
+          proxy: Option[Proxy]
         )(implicit trace: Trace): ZIO[Env & Scope, Throwable, Response] =
-          self0.request(version, method, url, headers, body, sslConfig).flatMap { response =>
+          self0.request(version, method, url, headers, body, sslConfig, proxy).flatMap { response =>
             response.body.asChunk.map { chunk =>
               response.copy(body = Body.fromChunk(chunk))
             }
@@ -413,8 +420,9 @@ object ZClient {
           headers: Headers,
           body: Body,
           sslConfig: Option[ClientSSLConfig],
+          proxy: Option[Proxy],
         )(implicit trace: Trace): ZIO[Env & Scope, Err2, Response] =
-          self.request(version, method, url, headers, body, sslConfig).mapError(f)
+          self.request(version, method, url, headers, body, sslConfig, proxy).mapError(f)
 
         override def socket[Env1 <: Env](
           version: Version,
@@ -443,8 +451,9 @@ object ZClient {
           headers: Headers,
           body: Body,
           sslConfig: Option[ClientSSLConfig],
+          proxy: Option[Proxy],
         )(implicit trace: Trace): ZIO[Env & Scope, Err2, Response] =
-          self.request(version, method, url, headers, body, sslConfig).refineOrDie(pf)
+          self.request(version, method, url, headers, body, sslConfig, proxy).refineOrDie(pf)
 
         override def socket[Env1 <: Env](
           version: Version,
@@ -469,10 +478,11 @@ object ZClient {
       headers: Headers,
       body: Body,
       sslConfig: Option[ClientSSLConfig],
+      proxy: Option[Proxy],
     )(implicit trace: Trace): ZIO[Env & Scope, Err, Response]
 
     final def request(req: Request)(implicit trace: Trace): ZIO[Env & Scope, Err, Response] =
-      request(req.version, req.method, req.url, req.headers, req.body, None)
+      request(req.version, req.method, req.url, req.headers, req.body, None, None)
 
     final def retry[Env1 <: Env, Err1 >: Err](policy: zio.Schedule[Env1, Err1, Any]) =
       new Driver[Env1, Err1] {
@@ -483,8 +493,9 @@ object ZClient {
           headers: Headers,
           body: Body,
           sslConfig: Option[ClientSSLConfig],
+          proxy: Option[Proxy]
         )(implicit trace: Trace): ZIO[Env1 & Scope, Err1, Response] =
-          self.request(version, method, url, headers, body, sslConfig).retry(policy)
+          self.request(version, method, url, headers, body, sslConfig, proxy).retry(policy)
 
         override def socket[Env2 <: Env1](
           version: Version,
@@ -629,6 +640,7 @@ object ZClient {
       headers: Headers,
       body: Body,
       sslConfig: Option[ClientSSLConfig],
+      proxy: Option[Proxy],
     )(implicit trace: Trace): ZIO[Scope, Throwable, Response] = {
       val request = Request(version, method, url, headers, body, None)
       val cfg     = sslConfig.fold(config)(config.ssl)
